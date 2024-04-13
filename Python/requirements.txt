@@ -1,0 +1,7 @@
+Jinja2==3.1.2
+PyYAML==6.0.1
+validators==0.20.0
+Requests==2.31.0
+prettytable==3.10.0
+alive-progress==3.1.5
+tenacity==8.2.3
