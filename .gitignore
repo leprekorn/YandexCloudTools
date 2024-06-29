@@ -60,3 +60,6 @@ dmypy.json
 .trunk
 .shellcheckrc
 .isort.cfg
+
+#Json data
+Python/yandex_cloud_wrapper/json_data/

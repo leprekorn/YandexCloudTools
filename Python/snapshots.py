@@ -3,10 +3,12 @@
 """
 Work with snapshots for Yandex Cloud Compute instances
 """
-import argparse
-import os
-import sys
 
+import argparse
+import json
+import os
+import pathlib
+import sys
 from alive_progress import alive_bar
 from argparser.main import args_parser
 from prettytable import PrettyTable
@@ -26,9 +28,11 @@ def main(namespace_args: argparse.Namespace) -> None:
     yc_rest_api_helper = YandexCloudRestApiHelper(token=yc_token, folder_id=folder_id)
     with alive_bar(bar_max) as progress_bar:
         for vm_name in namespace_args.vm_name:
-            instance: dict[str] = yc_rest_api_helper.get_instance_by_name(
-                instance_name=vm_name
-            )
+            instance: dict[str] = yc_rest_api_helper.get_instance_by_name(instance_name=vm_name)
+            if namespace_args.action == "create" and instance is None:
+                raise RuntimeError(f"Instance {vm_name} does not exist in YandexCloud! Instance must exist in order to create snapshot!")
+            if instance is None:
+                instance = load_instance_from_json(instance_name=vm_name)
             progress_bar.text("Getting instances from YandexCloud...")
             progress_bar()  # pylint: disable=E1102
             all_instances.append(instance)
@@ -67,9 +71,7 @@ def main(namespace_args: argparse.Namespace) -> None:
 
     # 5 Delete snapshots
     if namespace_args.action == "delete":
-        instances_with_snapshots = list(
-            filter(lambda j: (j.snapshot_id is not None), yc_instances)
-        )
+        instances_with_snapshots = list(filter(lambda j: (j.snapshot_id is not None), yc_instances))
         if len(instances_with_snapshots) > 0:
             run_action_with_alive_bar_on_hosts(
                 action="delete_snapshot",
@@ -81,9 +83,7 @@ def main(namespace_args: argparse.Namespace) -> None:
                 bar_text="Wait until snapshots become Deleted...",
                 yc_instances=instances_with_snapshots,
             )
-        instances_with_abandoned_snapshots = _find_instances_with_abandoned_snapshots(
-            yc_instances=yc_instances
-        )
+        instances_with_abandoned_snapshots = _find_instances_with_abandoned_snapshots(yc_instances=yc_instances)
         if len(instances_with_abandoned_snapshots) > 0:
             run_action_with_alive_bar_on_hosts(
                 action="delete_abandoned_snapshot",
@@ -123,9 +123,7 @@ def main(namespace_args: argparse.Namespace) -> None:
         print_common_info_table(yc_instances=yc_instances)
 
 
-def run_action_with_alive_bar_on_hosts(
-    action: str, bar_text: str, yc_instances: list[YandexCloudInstance]
-):
+def run_action_with_alive_bar_on_hosts(action: str, bar_text: str, yc_instances: list[YandexCloudInstance]):
     """
     Create alive bar
     For each instance run action with progress bar
@@ -142,7 +140,8 @@ def run_action_with_alive_bar_on_hosts(
             elif "delete_abandoned_snapshot" in action:
                 yc_instance.delete_abandoned_snapshot()
             elif "delete_instance" in action:
-                yc_instance.delete_instance()
+                if yc_instance.instance_exist:
+                    yc_instance.delete_instance()
             elif "create_instance_from_snapshot" in action:
                 yc_instance.create_instance_from_snapshot()
             else:
@@ -224,9 +223,7 @@ def find_and_print_abandoned_snapshots(yc_instances: list[YandexCloudInstance]):
     Find abandoned snapshots for instance
     If found, print table with abandoned snapshots
     """
-    instances_with_abandoned_snapshots = _find_instances_with_abandoned_snapshots(
-        yc_instances=yc_instances
-    )
+    instances_with_abandoned_snapshots = _find_instances_with_abandoned_snapshots(yc_instances=yc_instances)
     if len(instances_with_abandoned_snapshots) > 0:
         print("Found abandoned snapshots:")
         print_abandoned_snapshots_table(yc_instances=instances_with_abandoned_snapshots)
@@ -255,9 +252,21 @@ def check_that_instance_has_snapshot_to_restore(
         None,
     )
     if instance_without_snapshot is not None:
-        raise RuntimeError(
-            "Some instances do not have ready snapshot to restore, please check snapshot list!"
-        )
+        raise RuntimeError("Some instances do not have ready snapshot to restore, please check snapshot list!")
+
+
+def load_instance_from_json(instance_name: str) -> dict[str, any]:
+    """
+    Try to load json from disk if exist
+    """
+    json_data_folder = "yandex_cloud_wrapper/json_data"
+    json_files_folder = pathlib.Path(__file__).parent.resolve() / json_data_folder
+    instance_json = pathlib.Path(json_files_folder / f"{instance_name}.json")
+    if not (json_files_folder.is_dir() and instance_json.is_file()):
+        raise ValueError(f"Could not get instance {instance_name} from json file on disk, or from YandexCloud REST API")
+    with open(instance_json, "r", encoding="utf-8") as instance_file:
+        instance = json.load(instance_file)
+        return instance
 
 
 if __name__ == "__main__":

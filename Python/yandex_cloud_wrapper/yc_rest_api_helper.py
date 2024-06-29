@@ -2,7 +2,9 @@
 Interact with YC Cloud via REST API
 """
 
-from typing import Optional
+import json
+import pathlib
+from typing import Any, Optional
 
 import requests
 
@@ -13,16 +15,10 @@ class YandexCloudRestApiHelper:
     """
 
     YANDEX_CLOUD_COMPUTE_API_URL = "https://compute.api.cloud.yandex.net"
-    YANDEX_CLOUD_INSTANCES_ENDPOINT = (
-        f"{YANDEX_CLOUD_COMPUTE_API_URL}/compute/v1/instances"
-    )
+    YANDEX_CLOUD_INSTANCES_ENDPOINT = f"{YANDEX_CLOUD_COMPUTE_API_URL}/compute/v1/instances"
     YANDEX_CLOUD_DISKS_ENDPOINT = f"{YANDEX_CLOUD_COMPUTE_API_URL}/compute/v1/disks"
-    YANDEX_CLOUD_SNAPSHOTS_ENDPOINT = (
-        f"{YANDEX_CLOUD_COMPUTE_API_URL}/compute/v1/snapshots"
-    )
-    YANDEX_CLOUD_OPERATIONS_ENDPOINT = (
-        "https://operation.api.cloud.yandex.net/operations"
-    )
+    YANDEX_CLOUD_SNAPSHOTS_ENDPOINT = f"{YANDEX_CLOUD_COMPUTE_API_URL}/compute/v1/snapshots"
+    YANDEX_CLOUD_OPERATIONS_ENDPOINT = "https://operation.api.cloud.yandex.net/operations"
 
     def __init__(self, token: str, folder_id: str):
         self.token = token
@@ -33,29 +29,26 @@ class YandexCloudRestApiHelper:
         }
         self.session = requests.Session()
 
-    def get_instance_by_name(self, instance_name: str) -> dict[str]:
+    def get_instance_by_name(self, instance_name: str) -> Optional[dict[str, Any]]:
         """
         Get instances list from YC REST API
         Filter instances by name
         Return instance json
         """
         params = {"folderId": self.folder_id, "filter": f'name="{instance_name}"'}
-        response: dict = self.__get_response(
-            url=self.YANDEX_CLOUD_INSTANCES_ENDPOINT, params=params
-        )
+        response: dict = self.__get_response(url=self.YANDEX_CLOUD_INSTANCES_ENDPOINT, params=params)
         check_response = response.get("instances")
-        if check_response is None:
-            raise KeyError(f"There is no compute instance with name {instance_name}!")
-        instance = response["instances"][0]
-        instance_disk_id = instance["bootDisk"]["diskId"]
-        instance_disk = self.get_instance_disk(disk_id=instance_disk_id)
-        instance.update({"disk_info": instance_disk})
-        instance_ip_address = instance["networkInterfaces"][0]["primaryV4Address"][
-            "address"
-        ]
-        instance_subnet_id = instance["networkInterfaces"][0]["subnetId"]
-        instance.update({"subnetId": instance_subnet_id})
-        instance.update({"ip_address": instance_ip_address})
+        instance = None
+        if check_response is not None:
+            instance = response["instances"][0]
+            instance_disk_id = instance["bootDisk"]["diskId"]
+            instance_disk = self.get_instance_disk(disk_id=instance_disk_id)
+            instance.update({"disk_info": instance_disk})
+            instance_ip_address = instance["networkInterfaces"][0]["primaryV4Address"]["address"]
+            instance_subnet_id = instance["networkInterfaces"][0]["subnetId"]
+            instance.update({"subnetId": instance_subnet_id})
+            instance.update({"ip_address": instance_ip_address})
+            save_json(data=instance)
         return instance
 
     def get_instance_disk(self, disk_id: str) -> dict[str]:
@@ -66,14 +59,12 @@ class YandexCloudRestApiHelper:
         response: dict = self.__get_response(url=url, params={})
         return response
 
-    def get_snapshot_by_name(self, snapshot_name: str = None) -> Optional[dict[str]]:
+    def get_snapshot_by_name(self, snapshot_name: str = None) -> Optional[dict[str, Any]]:
         """
         Get snapshot by name
         """
         params = {"folderId": self.folder_id, "filter": f'name="{snapshot_name}"'}
-        response: dict = self.__get_response(
-            url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT, params=params
-        )
+        response: dict = self.__get_response(url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT, params=params)
         if response.get("snapshots") is not None:
             return response["snapshots"][0]
         return None
@@ -83,22 +74,16 @@ class YandexCloudRestApiHelper:
         Get all snapshots
         """
         params = {"folderId": self.folder_id}
-        response: dict = self.__get_response(
-            url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT, params=params
-        )
+        response: dict = self.__get_response(url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT, params=params)
         return response.get("snapshots")
 
-    def find_snapshot_for_disk(
-        self, disk_info: dict[str], snapshot_name: str = None
-    ) -> Optional[dict[str]]:
+    def find_snapshot_for_disk(self, disk_info: dict[str], snapshot_name: str = None) -> Optional[dict[str]]:
         """
         Find snapshot for disk
         """
         snapshot_by_name = self.get_snapshot_by_name(snapshot_name=snapshot_name)
         if snapshot_by_name is not None:
-            if self.compare_snapshot_and_disk(
-                snapshot=snapshot_by_name, disk_info=disk_info
-            ):
+            if self.compare_snapshot_and_disk(snapshot=snapshot_by_name, disk_info=disk_info):
                 return snapshot_by_name
 
         all_snapshots = self.get_all_snapshots()
@@ -107,9 +92,7 @@ class YandexCloudRestApiHelper:
                 return snapshot
         return None
 
-    def create_snapshot_for_disk(
-        self, source_disk_id: str, snapshot_name: str, snapshot_description: str
-    ) -> str:
+    def create_snapshot_for_disk(self, source_disk_id: str, snapshot_name: str, snapshot_description: str) -> str:
         """
         Create snapshot for disk
         """
@@ -119,14 +102,10 @@ class YandexCloudRestApiHelper:
             "name": snapshot_name,
             "description": snapshot_description,
         }
-        create_snapshot_response = self.__post_response(
-            url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT, json_body=body
-        )
+        create_snapshot_response = self.__post_response(url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT, json_body=body)
         return create_snapshot_response
 
-    def create_compute_instance_from_snapshot(
-        self, instance_json: dict[str], snapshot_id: str
-    ) -> str:
+    def create_compute_instance_from_snapshot(self, instance_json: dict[str], snapshot_id: str) -> str:
         """
         Create compute instance with params from instance json.
         Use snapshotId to create boot disk
@@ -165,30 +144,22 @@ class YandexCloudRestApiHelper:
                 }
             ],
             "hostname": instance_json["fqdn"].split(".")[0],
-            "schedulingPolicy": {
-                "preemptible": instance_json["schedulingPolicy"]["preemptible"]
-            },
+            "schedulingPolicy": {"preemptible": instance_json["schedulingPolicy"]["preemptible"]},
         }
-        create_instance_response = self.__post_response(
-            url=self.YANDEX_CLOUD_INSTANCES_ENDPOINT, json_body=body
-        )
+        create_instance_response = self.__post_response(url=self.YANDEX_CLOUD_INSTANCES_ENDPOINT, json_body=body)
         return create_instance_response
 
     def delete_snapshot_for_disk(self, snapshot_id: str) -> str:
         """
         Delete snapshot for disk
         """
-        return self.__delete_entity(
-            entity_id=snapshot_id, url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT
-        )
+        return self.__delete_entity(entity_id=snapshot_id, url=self.YANDEX_CLOUD_SNAPSHOTS_ENDPOINT)
 
     def delete_compute_instance(self, instance_id: str) -> str:
         """
         Delete compute instance by id
         """
-        return self.__delete_entity(
-            entity_id=instance_id, url=self.YANDEX_CLOUD_INSTANCES_ENDPOINT
-        )
+        return self.__delete_entity(entity_id=instance_id, url=self.YANDEX_CLOUD_INSTANCES_ENDPOINT)
 
     def __delete_entity(
         self,
@@ -242,13 +213,21 @@ class YandexCloudRestApiHelper:
         done = operation_result["done"]
         return done
 
-    def compare_snapshot_and_disk(
-        self, snapshot: dict[str], disk_info: dict[str]
-    ) -> bool:
+    def compare_snapshot_and_disk(self, snapshot: dict[str], disk_info: dict[str]) -> bool:
         """
         Compare snapshot and disk by sourceDiskId and sourceSnapshotId
         """
-        return (
-            snapshot["sourceDiskId"] == disk_info["id"]
-            or disk_info.get("sourceSnapshotId") == snapshot["id"]
-        )
+        return snapshot["sourceDiskId"] == disk_info["id"] or disk_info.get("sourceSnapshotId") == snapshot["id"]
+
+
+def save_json(data: dict[str, Any]) -> None:
+    """
+    Save json data to file
+    """
+    json_data_folder = pathlib.Path(__file__).parent.resolve() / "json_data"
+    json_data_folder.mkdir(exist_ok=True, parents=True)
+    file_name = data.get("name")
+    if file_name is None:
+        raise ValueError("Cannot save this json, there is no name field!")
+    with open(f"{json_data_folder}/{file_name}.json", "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=4)
